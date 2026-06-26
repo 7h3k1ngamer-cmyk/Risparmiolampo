@@ -4,6 +4,7 @@ import os
 import hashlib
 import json
 import httpx
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 
