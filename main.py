@@ -201,7 +201,7 @@ async def main() -> None:
     await check_and_publish()
     while True:
         logger.info("⏰ Controllo completato. Prossimo avvio tra 8 ore...")
-        await asyncio.sleep(28800)  # Esegue il ciclo ogni 8 ore esatte
+        await asyncio.sleep(28800)  # Esegue la ricerca ogni 8 ore esatte
         await check_and_publish()
 
 if __name__ == "__main__":
