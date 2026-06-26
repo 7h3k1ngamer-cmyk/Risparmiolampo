@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import os
@@ -25,7 +24,7 @@ MIN_DISCOUNT_GAMES = 40
 MIN_DISCOUNT_OTHER = 10
 MIN_PRICE_EUR = 20.0
 
-# Corretti gli URL di ricerca inserendo il percorso corretto per i parametri
+# URL corretti con il percorso di ricerca completo
 SEARCH_QUERIES = [
     {"label": "PC", "emoji": "🖥️", "url": f"https://instant-gaming.com{MIN_DISCOUNT_GAMES}&platform[]=1"},
     {"label": "PlayStation", "emoji": "🟦", "url": f"https://instant-gaming.com{MIN_DISCOUNT_GAMES}&platform[]=8&platform[]=9"},
@@ -111,7 +110,6 @@ CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
 AFFILIATE_ID = os.environ.get("INSTANT_GAMING_AFFILIATE_ID", "gamer-0c292bc").strip()
 
 SEEN_FILE = Path("/opt/render/project/src/seen_deals.json") if os.path.exists("/opt/render/project/src") else Path("seen_deals.json")
-# Corretto l'endpoint ufficiale delle API di Telegram
 TELEGRAM_API = f"https://telegram.org{BOT_TOKEN}"
 
 def load_seen() -> set[str]:
@@ -227,6 +225,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", "text/plain")
         self.end_headers()
         self.wfile.write(b"Bot is alive")
+        
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
 
 def run_health_server():
     port = int(os.environ.get("PORT", 8080))
@@ -236,9 +239,7 @@ def run_health_server():
 
 async def main() -> None:
     logger.info("🤖 Bot Comparatore Gaming Attivo")
-    # Avvia il server web in un thread separato
     threading.Thread(target=run_health_server, daemon=True).start()
-    # Esegue il loop del bot telegram
     await loop_bot()
 
 if __name__ == "__main__":
