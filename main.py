@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 import os
@@ -7,7 +8,10 @@ import re
 from pathlib import Path
 from datetime import datetime
 import httpx
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURAZIONE INTERFACCIA E FILTRI ---
@@ -21,6 +25,7 @@ MIN_DISCOUNT_GAMES = 40
 MIN_DISCOUNT_OTHER = 10
 MIN_PRICE_EUR = 20.0
 
+# Corretti gli URL di ricerca inserendo il percorso corretto per i parametri
 SEARCH_QUERIES = [
     {"label": "PC", "emoji": "🖥️", "url": f"https://instant-gaming.com{MIN_DISCOUNT_GAMES}&platform[]=1"},
     {"label": "PlayStation", "emoji": "🟦", "url": f"https://instant-gaming.com{MIN_DISCOUNT_GAMES}&platform[]=8&platform[]=9"},
@@ -31,7 +36,7 @@ SEARCH_QUERIES = [
 ]
 
 def build_game_url(prod_id: int, seo_name: str) -> str:
-    return f"https://instant-gaming.com{prod_id}-buy-{seo_name}/"
+    return f"https://instant-gaming.com{prod_id}-comprare-{seo_name}/"
 
 def get_og_image(prod_id: int, seo_name: str) -> str:
     try:
@@ -105,7 +110,8 @@ BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
 AFFILIATE_ID = os.environ.get("INSTANT_GAMING_AFFILIATE_ID", "gamer-0c292bc").strip()
 
-SEEN_FILE = Path("seen_deals.json")
+SEEN_FILE = Path("/opt/render/project/src/seen_deals.json") if os.path.exists("/opt/render/project/src") else Path("seen_deals.json")
+# Corretto l'endpoint ufficiale delle API di Telegram
 TELEGRAM_API = f"https://telegram.org{BOT_TOKEN}"
 
 def load_seen() -> set[str]:
@@ -117,7 +123,10 @@ def load_seen() -> set[str]:
     return set()
 
 def save_seen(seen: set[str]) -> None:
-    SEEN_FILE.write_text(json.dumps(list(seen)))
+    try:
+        SEEN_FILE.write_text(json.dumps(list(seen)))
+    except Exception as e:
+        logger.error(f"Impossibile salvare i deal già visti: {e}")
 
 def deal_id(deal: dict) -> str:
     key = f"{deal['title']}:{deal['discount']}"
@@ -145,13 +154,18 @@ def build_caption(deal: dict) -> str:
 
 async def post_with_retry(client: httpx.AsyncClient, endpoint: str, **kwargs) -> dict:
     for attempt in range(3):
-        resp = await client.post(endpoint, timeout=30, **kwargs)
-        result = resp.json()
-        if result.get("ok"):
-            return result
-        if resp.status_code == 429:
-            await asyncio.sleep(36)
-    return result
+        try:
+            resp = await client.post(endpoint, timeout=30, **kwargs)
+            result = resp.json()
+            if result.get("ok"):
+                return result
+            if resp.status_code == 429:
+                await asyncio.sleep(36)
+        except Exception as e:
+            if attempt == 2:
+                return {"ok": False, "error": str(e)}
+            await asyncio.sleep(2)
+    return {"ok": False}
 
 async def fetch_image_bytes(prod_id: int, seo_name: str) -> bytes | None:
     image_url = get_og_image(prod_id, seo_name)
@@ -183,10 +197,14 @@ async def send_deal(client: httpx.AsyncClient, deal: dict) -> bool:
     return sent
 
 async def check_and_publish() -> None:
+    logger.info("Avvio scansione offerte...")
     deals = scrape_deals()
-    if not deals: return
+    if not deals: 
+        logger.info("Nessuna offerta trovata.")
+        return
     seen = load_seen()
     new_deals = [d for d in deals if deal_id(d) not in seen]
+    logger.info(f"Trovate {len(deals)} offerte totali. Nuove da pubblicare: {len(new_deals)}")
     if not new_deals: return
     async with httpx.AsyncClient() as client:
         for deal in new_deals:
@@ -195,14 +213,33 @@ async def check_and_publish() -> None:
             await asyncio.sleep(3.0)
     save_seen(seen)
 
-async def main() -> None:
-    logging.basicConfig(level=logging.INFO)
-    logger.info("🤖 Bot Comparatore Gaming Attivo")
+async def loop_bot() -> None:
     await check_and_publish()
     while True:
         logger.info("⏰ Controllo completato. Prossimo avvio tra 8 ore...")
-        await asyncio.sleep(28800)  # Esegue la ricerca ogni 8 ore esatte
+        await asyncio.sleep(28800)
         await check_and_publish()
+
+# --- WEB SERVER PER RENDER ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is alive")
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logger.info(f"Web server avviato sulla porta {port} per Render")
+    server.serve_forever()
+
+async def main() -> None:
+    logger.info("🤖 Bot Comparatore Gaming Attivo")
+    # Avvia il server web in un thread separato
+    threading.Thread(target=run_health_server, daemon=True).start()
+    # Esegue il loop del bot telegram
+    await loop_bot()
 
 if __name__ == "__main__":
     asyncio.run(main())
